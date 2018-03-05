@@ -73,13 +73,13 @@ var main = function() {
 
         // debug the url
         if (args.url.indexOf("http") >= 0) {
-            log(args.url);
+            log("URL: " + args.url);
         } else {
-            log((config.url ? config.url + args.url : args.url));
+            log("URL: " + (config.url ? config.url + args.url : args.url));
         }
 
         if (args.params) {
-            log(JSON.stringify(args.params));
+            log("args.params: " + JSON.stringify(args.params));
         }
 
         // create a client
@@ -99,6 +99,24 @@ var main = function() {
             http.setValidatesSecureCertificate(config.validatesSecureCertificate);
         }
 
+        // MUST set requestHeader for Content-Type BEFORE open for multipart/form-data
+        // image boundaries to be created properly.  Bug?
+        if (args.headers && args.formEncode) {
+            for (var header in args.headers) {
+              if (args.formEncode && header == "Content-Type") {
+                if (header == "Content-Type" && args.headers[header] == "application/x-www-form-urlencoded") {
+                    formEncode = true;
+                } else if (header == "Content-Type" && args.headers[header] == "application/json") {
+                    formEncode = false;
+                }
+
+                http.setRequestHeader(header, typeof args.headers[header] == "function" ? args.headers[header]() : args.headers[header]);
+
+                log("Setting local header - " + header + ": " + ( typeof args.headers[header] == "function" ? args.headers[header]() : args.headers[header]));
+              }
+            }
+        }
+
         // open the url and check if we're overrding with
         // a local http based url
 
@@ -107,6 +125,7 @@ var main = function() {
         } else {
             http.open(args.method, (config.url ? config.url + args.url : args.url));
         }
+        log("Opening HTTPClient");
 
         // load up any global request headers
         requestHeaders.forEach(function(header) {
@@ -123,6 +142,8 @@ var main = function() {
         if (args.headers) {
             // load up any request headers
             for (var header in args.headers) {
+              // Don't set requestHeader for Content-Type if set priot to open
+              if (!args.formEncode || (args.formEncode && header !== "Content-Type")) {
                 if (header == "Content-Type" && args.headers[header] == "application/x-www-form-urlencoded") {
                     formEncode = true;
                 } else if (header == "Content-Type" && args.headers[header] == "application/json") {
@@ -132,13 +153,20 @@ var main = function() {
                 http.setRequestHeader(header, typeof args.headers[header] == "function" ? args.headers[header]() : args.headers[header]);
 
                 log("Setting local header - " + header + ": " + ( typeof args.headers[header] == "function" ? args.headers[header]() : args.headers[header]));
+              }
             }
         }
 
         // events
         http.onload = function(e) {
             // get the response parsed
-            var response = parseJSON(http.responseText);
+            // Return blob or text based on method argument
+            var response;
+            if (args.returnBlob) {
+              response = http.responseData;
+            } else {
+              response = parseJSON(http.responseText);
+            }
 
             if (config.onLoad) {
                 config.onLoad(response, onLoad);
@@ -184,10 +212,10 @@ var main = function() {
 
         function send() {
             // go
-            log(args.params);
 
             if (args.params && (args.method === "POST" || args.method === "PUT")) {
-                if (formEncode) {
+                // Do NOT stringify parameters based on method setting
+                if (formEncode || args.formEncode) {
                     http.send(args.params);
                 } else {
                     http.send(JSON.stringify(args.params));
@@ -264,14 +292,16 @@ var main = function() {
     // add a new method
     reste.addMethod = function(args) {
 
-        log(args.requestHeaders);
+        // log(args.name + " args.requestHeaders: " + args.requestHeaders);
 
         reste[args.name] = function(params, onLoad, onError) {
 
             var body,
                 method = "GET",
                 url,
-                deferred;
+                deferred,
+                returnBlob = false, // Return Blob or Text
+                formEncode = false; // Stringify or send raw parameters
 
             if (args.post)
                 method = "POST";
@@ -283,6 +313,12 @@ var main = function() {
                 method = "DELETE";
 
             url = args[method.toLowerCase()] || args.get;
+
+            if (args.returnBlob)
+              returnBlob = true;
+
+            if (args.formEncode)
+              formEncode = true;
 
             if (config.Q && !onLoad && typeof (params) != "function") {
                 deferred = config.Q.defer();
@@ -339,7 +375,9 @@ var main = function() {
                     params : body,
                     headers : args.requestHeaders || args.headers,
                     beforePost : args.beforePost,
-                    beforeSend : args.beforeSend
+                    beforeSend : args.beforeSend,
+                    returnBlob: returnBlob,
+                    formEncode: formEncode
                 }, onLoad, onError);
 
             } else {
@@ -371,7 +409,9 @@ var main = function() {
                         params : body,
                         headers : args.requestHeaders || args.headers,
                         beforePost : args.beforePost,
-                        beforeSend : args.beforeSend
+                        beforeSend : args.beforeSend,
+                        returnBlob: returnBlob,
+                        formEncode: formEncode
                     }, onLoad, onError);
                 }
             }
